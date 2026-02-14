@@ -5,6 +5,7 @@ import { getMessages } from '../api';
 import ReactMarkdown from 'react-markdown';
 import { Send, User, Bot, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
+import { ToolCall } from '../components/ToolCall';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081/api';
 
@@ -16,6 +17,7 @@ export const Chat: React.FC = () => {
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingTools, setStreamingTools] = useState<any[]>([]);
 
   const { data: messages, isLoading } = useQuery({
     queryKey: ['messages', id],
@@ -25,7 +27,7 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent, isStreaming]);
+  }, [messages, streamingContent, isStreaming, streamingTools]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,6 +37,7 @@ export const Chat: React.FC = () => {
     setInput('');
     setIsStreaming(true);
     setStreamingContent('');
+    setStreamingTools([]);
 
     // Optimistic update for user message
     queryClient.setQueryData(['messages', id], (old: any[]) => [
@@ -70,15 +73,34 @@ export const Chat: React.FC = () => {
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
         
-        const lines = buffer.split('\n');
+        const lines = buffer.split('\n\n'); // SSE events are separated by double newline
         buffer = lines.pop() || ''; // Keep the incomplete line in the buffer
 
         for (const line of lines) {
-          if (!line.trim()) continue;
+          const trimmedLine = line.trim();
+          if (!trimmedLine.startsWith('data: ')) continue;
+          
+          const jsonStr = trimmedLine.slice(6); // Remove 'data: ' prefix
+          
           try {
-            const event = JSON.parse(line);
+            const event = JSON.parse(jsonStr);
             if (event.type === 'content') {
               setStreamingContent(prev => prev + event.payload);
+            } else if (event.type === 'tool_call') {
+               const tool = event.payload;
+               setStreamingTools(prev => {
+                   const existing = prev.find(t => t.id === tool.id);
+                   if (existing) {
+                       return prev.map(t => t.id === tool.id ? { ...t, ...tool } : t);
+                   }
+                   return [...prev, { ...tool, status: 'pending' }];
+               });
+            } else if (event.type === 'tool_result') {
+               setStreamingTools(prev => prev.map(t => 
+                   t.id === event.payload.id 
+                       ? { ...t, result: event.payload, status: 'completed' } 
+                       : t
+               ));
             } else if (event.type === 'error') {
                console.error('Stream error:', event.payload);
             } else if (event.type === 'done') {
@@ -95,6 +117,7 @@ export const Chat: React.FC = () => {
     } finally {
       setIsStreaming(false);
       setStreamingContent('');
+      setStreamingTools([]);
       queryClient.invalidateQueries({ queryKey: ['messages', id] });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
     }
@@ -141,18 +164,30 @@ export const Chat: React.FC = () => {
                  <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 bg-blue-600">
                     <Bot className="w-4 h-4 text-white" />
                 </div>
-                <div className="max-w-[85%] rounded-2xl px-5 py-3.5 shadow-sm bg-slate-900/50 border border-slate-800 text-slate-100 rounded-tl-sm">
-                    {streamingContent ? (
-                        <div className="prose prose-invert prose-sm max-w-none break-words leading-relaxed">
-                            <ReactMarkdown>{streamingContent}</ReactMarkdown>
-                        </div>
-                    ) : (
-                         <div className="flex items-center gap-1 text-slate-400">
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                <div className="max-w-[85%] space-y-2">
+                    {/* Tool Calls */}
+                    {streamingTools.length > 0 && (
+                        <div className="flex flex-col gap-1 w-full max-w-2xl mb-2">
+                            {streamingTools.map((tool) => (
+                                <ToolCall key={tool.id} tool={tool} />
+                            ))}
                         </div>
                     )}
+                    
+                    {/* Message Content */}
+                    <div className="rounded-2xl px-5 py-3.5 shadow-sm bg-slate-900/50 border border-slate-800 text-slate-100 rounded-tl-sm">
+                        {streamingContent ? (
+                            <div className="prose prose-invert prose-sm max-w-none break-words leading-relaxed">
+                                <ReactMarkdown>{streamingContent}</ReactMarkdown>
+                            </div>
+                        ) : (
+                             <div className="flex items-center gap-1 text-slate-400">
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         )}

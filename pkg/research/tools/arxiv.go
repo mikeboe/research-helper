@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -53,11 +54,23 @@ func SearchArxiv(query string, maxResults int) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	slog.Info("API request made", "url", apiURL)
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		slog.Error("API returned non-200 status code", "status", resp.StatusCode, "body", string(bodyBytes))
+		return "", fmt.Errorf("API returned non-200 status code: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	slog.Info("API response received", "status", resp.StatusCode)
+
 	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
+
+	slog.Info("API response body read", "size", len(body))
 
 	// Unmarshal the XML response
 	var feed ArxivFeed

@@ -229,7 +229,9 @@ func (s *Service) SendMessage(ctx context.Context, conversationID uuid.UUID, con
 	// Return iterator
 	return func(yield func(StreamEvent, error) bool) {
 		slog.Info("Starting agent run", "conversation_id", conversationID)
-		runCfg := agent.RunConfig{}
+		runCfg := agent.RunConfig{
+			StreamingMode: agent.StreamingModeSSE,
+		}
 
 		// runner.Run returns iter.Seq2[*session.Event, error]
 		next := runner.Run(ctx, userID, sessionID, userContent, runCfg)
@@ -260,7 +262,7 @@ func (s *Service) SendMessage(ctx context.Context, conversationID uuid.UUID, con
 						}
 					}
 					if part.FunctionResponse != nil {
-						slog.Info("Agent tool result", "tool", part.FunctionResponse.Name, "result", part.FunctionResponse)
+						slog.Info("Agent tool result", "tool", part.FunctionResponse.Name)
 						if !yield(StreamEvent{Type: "tool_result", Payload: part.FunctionResponse}, nil) {
 							return
 						}

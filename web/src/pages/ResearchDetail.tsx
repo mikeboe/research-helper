@@ -14,14 +14,19 @@ export const ResearchDetail: React.FC = () => {
     queryKey: ['job', id],
     queryFn: () => getJob(id!),
     enabled: !!id,
-    refetchInterval: (data) => (data?.status === 'completed' || data?.status === 'failed' ? false : 2000),
+    refetchInterval: (query) => {
+        const data = query.state.data;
+        return (data?.status === 'completed' || data?.status === 'failed' ? false : 2000);
+    },
   });
 
   const { data: logs } = useQuery({
     queryKey: ['logs', id],
     queryFn: () => getJobLogs(id!),
     enabled: !!id,
-    refetchInterval: (data) => (job?.status === 'completed' || job?.status === 'failed' ? false : 2000),
+    refetchInterval: () => {
+         return (job?.status === 'completed' || job?.status === 'failed' ? false : 2000);
+    },
   });
 
   // Auto-scroll logs

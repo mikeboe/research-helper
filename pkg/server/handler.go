@@ -21,6 +21,8 @@ func NewHandler(s *Service, c *chat.Service) *Handler {
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api := r.Group("/api")
 	{
+
+		api.POST("/mcp")
 		api.POST("/research", h.createJob)
 		api.GET("/research", h.listJobs)
 		api.GET("/research/:id", h.getJob)
@@ -96,23 +98,34 @@ func (h *Handler) sendMessage(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "application/x-ndjson")
+	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
 
-	enc := json.NewEncoder(c.Writer)
 	for event, err := range next {
 		if err != nil {
 			// If we encounter an error during the stream, we try to send it as an event
-			_ = enc.Encode(chat.StreamEvent{
+			errEvent := chat.StreamEvent{
 				Type:    "error",
 				Payload: err.Error(),
-			})
+			}
+			if data, err := json.Marshal(errEvent); err == nil {
+				_, _ = c.Writer.Write([]byte("data: "))
+				_, _ = c.Writer.Write(data)
+				_, _ = c.Writer.Write([]byte("\n\n"))
+				c.Writer.Flush()
+			}
 			return
 		}
-		if err := enc.Encode(event); err != nil {
+
+		data, err := json.Marshal(event)
+		if err != nil {
 			return
 		}
+		_, _ = c.Writer.Write([]byte("data: "))
+		_, _ = c.Writer.Write(data)
+		_, _ = c.Writer.Write([]byte("\n\n"))
 		c.Writer.Flush()
 	}
 }
