@@ -14,6 +14,7 @@ import (
 	"github.com/tmc/langchaingo/llms"
 
 	"github.com/mikeboe/research-helper/pkg/clients"
+	"github.com/mikeboe/research-helper/pkg/config"
 	"github.com/mikeboe/research-helper/pkg/database"
 	"github.com/mikeboe/research-helper/pkg/embeddings"
 	"github.com/mikeboe/research-helper/pkg/research/tools"
@@ -27,13 +28,14 @@ type ResearchEngine struct {
 	LLM           llms.Model
 	DB            *database.PostgresDB
 	Embedder      *embeddings.GoogleEmbedder
+	c             *config.Config
 	Logger        *slog.Logger
 	OnStateUpdate func(state ResearchState)
 }
 
-func NewEngine(cfg Config, db *database.PostgresDB) (*ResearchEngine, error) {
+func NewEngine(cfg Config, db *database.PostgresDB, c *config.Config) (*ResearchEngine, error) {
 	// Initialize LLM
-	llm, err := clients.GoogleAi(clients.DefaultModel)
+	llm, err := clients.GoogleAi(clients.ModelType(c.ReasoningModel))
 	if err != nil {
 		return nil, fmt.Errorf("failed to init LLM: %w", err)
 	}
@@ -42,12 +44,8 @@ func NewEngine(cfg Config, db *database.PostgresDB) (*ResearchEngine, error) {
 	// Assuming LLMApiKey is same for embeddings or we use env var inside NewGoogleEmbedder if empty
 	// Note: pkg/embeddings/google.go NewGoogleEmbedder takes apiKey as argument.
 	// We might need to ensure cfg.LLMApiKey is set or get from env.
-	apiKey := cfg.LLMApiKey
-	if apiKey == "" {
-		apiKey = os.Getenv("GEMINI_API_KEY")
-	}
 
-	embedder, err := embeddings.NewGoogleEmbedder(context.Background(), "gemini-embedding-001", apiKey)
+	embedder, err := embeddings.NewGoogleEmbedder(context.Background(), c.EmbeddingModel, c.GoogleApiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init embedder: %w", err)
 	}
@@ -67,6 +65,7 @@ func NewEngine(cfg Config, db *database.PostgresDB) (*ResearchEngine, error) {
 		DB:       db,
 		Embedder: embedder,
 		Logger:   slog.Default(),
+		c:        c,
 	}, nil
 }
 
@@ -547,7 +546,7 @@ Use the following gathered facts and summaries:
 
 %s
 
-Format as Markdown with Introduction, Key Findings, Methodology/Discussion, and Conclusion.`,
+Format as Markdown with Introduction, Key Findings, Methodology/Discussion, and Conclusion. Add inline citations and references, including sources for each fact and summary, and provide a bibliography at the end.`,
 		e.State.Topic, strings.Join(e.State.AccumulatedFacts, "\n\n"))
 
 	resp, err := e.LLM.GenerateContent(ctx, []llms.MessageContent{

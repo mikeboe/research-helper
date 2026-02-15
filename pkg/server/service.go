@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mikeboe/research-helper/pkg/config"
 	"github.com/mikeboe/research-helper/pkg/database"
 	"github.com/mikeboe/research-helper/pkg/research"
 )
@@ -15,12 +16,14 @@ import (
 type Service struct {
 	DB  *database.PostgresDB
 	Cfg research.Config
+	c   *config.Config
 }
 
-func NewService(db *database.PostgresDB, cfg research.Config) *Service {
+func NewService(db *database.PostgresDB, cfg research.Config, c *config.Config) *Service {
 	return &Service{
 		DB:  db,
 		Cfg: cfg,
+		c:   c,
 	}
 }
 
@@ -41,7 +44,7 @@ type CreateJobRequest struct {
 func (s *Service) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	configJSON, _ := json.Marshal(map[string]interface{}{
 		"max_iterations": 5,
-		"collection":     s.Cfg.Collection,
+		"collection":     s.c.CollectionName,
 	})
 
 	jobID := uuid.New()
@@ -146,7 +149,7 @@ func (s *Service) runWorker(jobID uuid.UUID, topic string) {
 	// Configure engine with DB logger
 	dbLogger := slog.New(NewDBLogHandler(s.DB, jobID))
 
-	engine, err := research.NewEngine(s.Cfg, s.DB)
+	engine, err := research.NewEngine(s.Cfg, s.DB, s.c)
 	if err != nil {
 		s.failJob(ctx, jobID, fmt.Sprintf("Failed to init engine: %v", err))
 		return

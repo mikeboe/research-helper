@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/mikeboe/research-helper/pkg/config"
 	"github.com/mikeboe/research-helper/pkg/database"
 	"github.com/mikeboe/research-helper/pkg/research"
 	"github.com/spf13/cobra"
@@ -23,6 +24,7 @@ func main() {
 	// Setup structured logging
 	handler := slog.NewTextHandler(os.Stdout, nil)
 	slog.SetDefault(slog.New(handler))
+	config := config.Load()
 
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
@@ -95,7 +97,7 @@ func main() {
 			}
 
 			// Initialize Engine
-			engine, err := research.NewEngine(cfg, db)
+			engine, err := research.NewEngine(cfg, db, config)
 			if err != nil {
 				slog.Error("Error initializing engine", "error", err)
 				os.Exit(1)

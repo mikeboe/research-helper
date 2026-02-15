@@ -2,13 +2,14 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mikeboe/research-helper/pkg/config"
 	"github.com/mikeboe/research-helper/pkg/database"
 	"github.com/mikeboe/research-helper/pkg/embeddings"
 	"google.golang.org/adk/agent"
@@ -22,6 +23,7 @@ import (
 )
 
 type Service struct {
+	config *config.Config
 	DB     *database.PostgresDB
 	Client *genai.Client
 	Agent  agent.Agent
@@ -48,41 +50,37 @@ type StreamEvent struct {
 	Payload interface{} `json:"payload"`
 }
 
-func NewService(ctx context.Context, db *database.PostgresDB) (*Service, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
-	}
+func NewService(ctx context.Context, db *database.PostgresDB, config *config.Config) (*Service, error) {
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: apiKey,
+		APIKey: config.GoogleApiKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GenAI client: %w", err)
 	}
 
 	// Initialize ADK Agent
-	modelClient, err := gemini.NewModel(ctx, "gemini-3-pro-preview", &genai.ClientConfig{
-		APIKey: apiKey,
+	modelClient, err := gemini.NewModel(ctx, config.ReasoningModel, &genai.ClientConfig{
+		APIKey: config.GoogleApiKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create model: %w", err)
 	}
 
 	// Initialize Embedder
-	embedder, err := embeddings.NewGoogleEmbedder(ctx, "gemini-embedding-001", apiKey)
+	embedder, err := embeddings.NewGoogleEmbedder(ctx, config.EmbeddingModel, config.GoogleApiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedder: %w", err)
 	}
 
 	// Initialize RAG Toolset
-	ragTools := NewRagToolset(db, embedder)
+	ragTools := NewRagToolset(db, embedder, config)
 
 	researchAgent, err := llmagent.New(llmagent.Config{
 		Name:        "research_helper",
 		Model:       modelClient,
 		Description: "A research assistant with access to RAG tools.",
-		Instruction: "You are a helpful research assistant. Use the available tools to search for information and answer the user's questions based on the retrieved content. ALWAYS use search_content tool first.",
+		Instruction: "You are a helpful research assistant. Use the available tools to search for information and answer the user's questions based on the retrieved content. ALWAYS use search_content tool first. The answer format should be grouped by source, with a unordered list of content pieces supporting the question. the format would be: # Source: <source>, \n\n - <content>\n - <content>\n - <content>....",
 		Toolsets: []tool.Toolset{
 			ragTools,
 		},
@@ -301,18 +299,43 @@ func (s *Service) generateTitle(convID uuid.UUID, userMsg, modelMsg string) {
 
 	prompt := fmt.Sprintf("Generate a short, concise title (max 5 words) for this chat conversation:\nUser: %s\nModel: %s", userMsg, modelMsg)
 
+	returnSchema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"title": {
+				Type: genai.TypeString,
+			},
+		},
+		Required: []string{"title"},
+	}
+
 	resp, err := s.Client.Models.GenerateContent(ctx, "gemini-2.0-flash", []*genai.Content{
 		{Parts: []*genai.Part{{Text: prompt}}},
-	}, nil)
+	}, &genai.GenerateContentConfig{
+		ResponseMIMEType: "application/json",
+		ResponseSchema:   returnSchema,
+	})
 
 	if err == nil && len(resp.Candidates) > 0 {
-		title := ""
-		for _, p := range resp.Candidates[0].Content.Parts {
-			title += p.Text
+		var respData struct {
+			Title string `json:"title"`
 		}
-		// Clean quotes and newlines
-		// ... (basic cleanup)
 
-		_, _ = s.DB.Pool.Exec(ctx, `UPDATE conversations SET title = $2 WHERE id = $1`, convID, title)
+		rawJSON := ""
+		for _, p := range resp.Candidates[0].Content.Parts {
+			rawJSON += p.Text
+		}
+
+		if err := json.Unmarshal([]byte(rawJSON), &respData); err != nil {
+			slog.Error("Failed to unmarshal title generation response", "error", err, "raw_json", rawJSON)
+			return
+		}
+
+		if respData.Title != "" {
+			_, err := s.DB.Pool.Exec(ctx, `UPDATE conversations SET title = $2 WHERE id = $1`, convID, respData.Title)
+			if err != nil {
+				slog.Error("Failed to update conversation title", "error", err)
+			}
+		}
 	}
 }
